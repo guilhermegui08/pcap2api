@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-pcap-intel-analyzer v2.0
+pcap2api v2.0
 =========================
 Analyses one or more PCAP/CAP files and checks extracted observables
 (IPs, domains, URLs) against a set of IntelMQ-compatible threat intelligence
@@ -105,9 +105,9 @@ except ImportError:
 # -- Constants -----------------------------------------------------------------
 
 VERSION = "2.0.0"
-TOOL_NAME = "pcap-intel-analyzer"
+TOOL_NAME = "pcap2api"
 
-DEFAULT_CACHE_DIR = Path.home() / ".cache" / "pcap-intel-analyzer"
+DEFAULT_CACHE_DIR = Path.home() / ".cache" / "pcap2api"
 
 PRIVATE_NETWORKS = [
     ipaddress.ip_network("10.0.0.0/8"),

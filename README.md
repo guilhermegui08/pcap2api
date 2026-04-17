@@ -2,10 +2,10 @@
 
 > Analyse network captures against threat intelligence feeds — no SIEM required.
 
-`pcap-intel-analyzer` extracts IPs, domains, and URLs from one or more PCAP/CAP files and cross-references them against seven public threat intelligence feeds plus optional commercial APIs. It is designed to mirror the **IntelMQ Collector → Parser → Output pipeline** in a single, self-contained command-line tool.
+`pcap2api` extracts IPs, domains, and URLs from one or more PCAP/CAP files and cross-references them against seven public threat intelligence feeds plus optional commercial APIs. It is designed to mirror the **IntelMQ Collector → Parser → Output pipeline** in a single, self-contained command-line tool.
 
 ```
-$ pcap-intel-analyzer capture.pcap
+$ pcap2api capture.pcap
 
   Loading 6 threat feed(s)…
   [cache] URLhaus (4m ago)       ips:12482  domains:8741  urls:51203
@@ -49,7 +49,7 @@ The tool emulates the IntelMQ **Collector → Parser → Expert → Output** pip
 - **Ports** — flagged against a known-malicious port list
 
 ### Local disk cache with TTL management
-Feeds are downloaded once and stored under `~/.cache/pcap-intel-analyzer/`. Each feed's recommended refresh interval is honoured automatically. Subsequent runs reuse the cache; use `--refresh-feeds` to force an immediate re-download.
+Feeds are downloaded once and stored under `~/.cache/pcap2api/`. Each feed's recommended refresh interval is honoured automatically. Subsequent runs reuse the cache; use `--refresh-feeds` to force an immediate re-download.
 
 ### Optional remote API backends
 For deeper enrichment when API keys are available:
@@ -106,15 +106,15 @@ pip install scapy requests rich
 ### Get the script
 
 ```bash
-curl -O https://raw.githubusercontent.com/your-org/pcap-intel-analyzer/main/pcap2api.py
+curl -O https://raw.githubusercontent.com/guilhermegui08/pcap2api/refs/heads/main/pcap2api.py
 chmod +x pcap2api.py
 ```
 
 Or clone the repository:
 
 ```bash
-git clone https://github.com/your-org/pcap-intel-analyzer.git
-cd pcap-intel-analyzer
+git clone https://github.com/guilhermegui08/pcap2api
+cd pcap2api
 pip3 install -r requirements.txt
 ```
 
@@ -246,7 +246,7 @@ All matches are tagged using the [IntelMQ Data Harmonisation](https://docs.intel
 ## Full option reference
 
 ```
-usage: pcap-intel-analyzer [-h] [--version]
+usage: pcap2api [-h] [--version]
                            [--no-urlhaus] [--no-feodo] [--no-phishtank]
                            [--no-bambenek] [--no-blocklist-de]
                            [--no-emerging-threats]
