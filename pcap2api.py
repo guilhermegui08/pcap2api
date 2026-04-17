@@ -66,16 +66,13 @@ from urllib.parse import urlparse
 # -- Optional third-party imports ----------------------------------------------
 try:
     from scapy.all import rdpcap, IP, IPv6, TCP, UDP, DNS, DNSQR, Raw
-
-    # O HTTPRequest vive em um módulo separado no Scapy moderno
     try:
         from scapy.layers.http import HTTPRequest
     except ImportError:
-        # Tenta carregar de forma genérica se o caminho acima falhar
         from scapy.all import HTTPRequest
     HAS_SCAPY = True
 except ImportError as e:
-    print(f"[DEBUG] Erro real de importação: {e}")
+    print(f"[DEBUG] Import Error: {e}")
     HAS_SCAPY = False
 
 try:
