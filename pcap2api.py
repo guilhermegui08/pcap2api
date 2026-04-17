@@ -40,8 +40,8 @@ Requires
 
 Usage
 -----
-  python pcap_intel_analyzer.py capture.pcap [capture2.cap ...] [options]
-  python pcap_intel_analyzer.py --help
+  python pcap2api.py capture.pcap [capture2.cap ...] [options]
+  python pcap2api.py --help
 """
 
 from __future__ import annotations
@@ -66,6 +66,7 @@ from urllib.parse import urlparse
 # -- Optional third-party imports ----------------------------------------------
 try:
     from scapy.all import rdpcap, IP, IPv6, TCP, UDP, DNS, DNSQR, Raw
+
     # O HTTPRequest vive em um módulo separado no Scapy moderno
     try:
         from scapy.layers.http import HTTPRequest
@@ -79,6 +80,7 @@ except ImportError as e:
 
 try:
     import requests
+
     HAS_REQUESTS = True
 except ImportError:
     HAS_REQUESTS = False
@@ -89,15 +91,20 @@ try:
     from rich.panel import Panel
     from rich import box
     from rich.progress import (
-        Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn,
+        Progress,
+        SpinnerColumn,
+        TextColumn,
+        BarColumn,
+        TimeElapsedColumn,
     )
+
     HAS_RICH = True
 except ImportError:
     HAS_RICH = False
 
 # -- Constants -----------------------------------------------------------------
 
-VERSION   = "2.0.0"
+VERSION = "2.0.0"
 TOOL_NAME = "pcap-intel-analyzer"
 
 DEFAULT_CACHE_DIR = Path.home() / ".cache" / "pcap-intel-analyzer"
@@ -114,24 +121,51 @@ PRIVATE_NETWORKS = [
 ]
 
 SERVICES = {
-    21: "ftp", 22: "ssh", 23: "telnet", 25: "smtp",
-    53: "dns", 80: "http", 110: "pop3", 143: "imap",
-    443: "https", 445: "smb", 3306: "mysql", 3389: "rdp",
-    5432: "postgresql", 6379: "redis", 8080: "http-alt",
-    8443: "https-alt", 27017: "mongodb", 6667: "irc",
-    4444: "metasploit", 1433: "mssql", 5900: "vnc",
+    21: "ftp",
+    22: "ssh",
+    23: "telnet",
+    25: "smtp",
+    53: "dns",
+    80: "http",
+    110: "pop3",
+    143: "imap",
+    443: "https",
+    445: "smb",
+    3306: "mysql",
+    3389: "rdp",
+    5432: "postgresql",
+    6379: "redis",
+    8080: "http-alt",
+    8443: "https-alt",
+    27017: "mongodb",
+    6667: "irc",
+    4444: "metasploit",
+    1433: "mssql",
+    5900: "vnc",
 }
 
 SUSPICIOUS_PORTS = {
-    4444, 1337, 31337, 12345, 54321, 6666, 6667, 6668, 1080, 9050, 9051,
+    4444,
+    1337,
+    31337,
+    12345,
+    54321,
+    6666,
+    6667,
+    6668,
+    1080,
+    9050,
+    9051,
 }
 
 # -- Core data structures ------------------------------------------------------
 
+
 @dataclass
 class Observable:
     """A single network observable extracted from a PCAP."""
-    kind: str          # ip | domain | url | port
+
+    kind: str  # ip | domain | url | port
     value: str
     context: str = ""
     source_file: str = ""
@@ -141,6 +175,7 @@ class Observable:
 @dataclass
 class ThreatMatch:
     """A threat intelligence hit for an observable."""
+
     observable: Observable
     source: str
     classification_type: str = ""
@@ -148,7 +183,9 @@ class ThreatMatch:
     confidence: float = 0.0
     details: dict[str, Any] = field(default_factory=dict)
 
+
 # -- Utility helpers -----------------------------------------------------------
+
 
 def is_private_ip(addr: str) -> bool:
     try:
@@ -177,11 +214,9 @@ def extract_urls_from_payload(payload: bytes) -> list[str]:
     try:
         text = payload.decode("utf-8", errors="ignore")
         host_m = re.search(r"Host:\s*([^\r\n]+)", text)
-        req_m  = re.search(r"(?:GET|POST|PUT|DELETE|HEAD)\s+(\S+)", text)
+        req_m = re.search(r"(?:GET|POST|PUT|DELETE|HEAD)\s+(\S+)", text)
         if host_m and req_m:
-            urls.append(
-                f"http://{host_m.group(1).strip()}{req_m.group(1).strip()}"
-            )
+            urls.append(f"http://{host_m.group(1).strip()}{req_m.group(1).strip()}")
         for m in re.finditer(r"https?://[^\s\"'<>]+", text):
             urls.append(m.group(0))
     except Exception:
@@ -189,8 +224,9 @@ def extract_urls_from_payload(payload: bytes) -> list[str]:
     return urls
 
 
-def _http_get(url: str, headers: dict | None = None,
-              timeout: int = 30) -> "requests.Response | None":
+def _http_get(
+    url: str, headers: dict | None = None, timeout: int = 30
+) -> "requests.Response | None":
     if not HAS_REQUESTS:
         return None
     try:
@@ -202,16 +238,18 @@ def _http_get(url: str, headers: dict | None = None,
     except Exception:
         return None
 
+
 # ==============================================================================
 #  PCAP EXTRACTOR
 # ==============================================================================
+
 
 class PcapExtractor:
     """Extracts observables from a PCAP file using Scapy."""
 
     def __init__(self, filepath: str, verbose: bool = False):
         self.filepath = filepath
-        self.verbose  = verbose
+        self.verbose = verbose
         self._obs: dict[str, Observable] = {}
 
     def _add(self, kind: str, value: str, context: str = "") -> None:
@@ -220,20 +258,22 @@ class PcapExtractor:
             self._obs[key].count += 1
         else:
             self._obs[key] = Observable(
-                kind=kind, value=value, context=context,
+                kind=kind,
+                value=value,
+                context=context,
                 source_file=self.filepath,
             )
 
     def extract(self) -> list[Observable]:
         if not HAS_SCAPY:
-            print("[ERROR] scapy not installed. Run: pip install scapy",
-                  file=sys.stderr)
+            print(
+                "[ERROR] scapy not installed. Run: pip install scapy", file=sys.stderr
+            )
             sys.exit(1)
         try:
             packets = rdpcap(self.filepath)
         except Exception as exc:
-            print(f"[ERROR] Cannot read {self.filepath}: {exc}",
-                  file=sys.stderr)
+            print(f"[ERROR] Cannot read {self.filepath}: {exc}", file=sys.stderr)
             return []
         for pkt in packets:
             self._process(pkt)
@@ -268,10 +308,7 @@ class PcapExtractor:
         # DNS queries
         if pkt.haslayer(DNS) and pkt.haslayer(DNSQR):
             try:
-                qname = (
-                    pkt[DNSQR].qname.decode("utf-8", errors="ignore")
-                    .rstrip(".")
-                )
+                qname = pkt[DNSQR].qname.decode("utf-8", errors="ignore").rstrip(".")
                 if is_valid_domain(qname):
                     self._add("domain", qname, "dns-query")
             except Exception:
@@ -290,10 +327,12 @@ class PcapExtractor:
                     except Exception:
                         pass
 
+
 # ==============================================================================
 #  FEED CACHE MANAGER
 #  Disk-backed TTL cache — mirrors IntelMQ's feed scheduler.
 # ==============================================================================
+
 
 class FeedCache:
     """Persist parsed feed data on disk with a per-feed TTL."""
@@ -312,7 +351,7 @@ class FeedCache:
             return None
         try:
             data = json.loads(p.read_text(encoding="utf-8"))
-            age  = time.time() - data.get("ts", 0)
+            age = time.time() - data.get("ts", 0)
             if age < ttl_seconds:
                 return data.get("payload")
         except Exception:
@@ -323,8 +362,7 @@ class FeedCache:
         p = self._path(feed_id)
         try:
             p.write_text(
-                json.dumps({"ts": time.time(), "payload": payload},
-                           default=str),
+                json.dumps({"ts": time.time(), "payload": payload}, default=str),
                 encoding="utf-8",
             )
         except Exception:
@@ -335,27 +373,35 @@ class FeedCache:
         if not p.exists():
             return "no cache"
         try:
-            ts  = json.loads(p.read_text())["ts"]
+            ts = json.loads(p.read_text())["ts"]
             age = int(time.time() - ts)
             if age < 120:
                 return f"{age}s ago"
             if age < 7200:
-                return f"{age//60}m ago"
-            return f"{age//3600}h ago"
+                return f"{age // 60}m ago"
+            return f"{age // 3600}h ago"
         except Exception:
             return "unknown"
+
 
 # ==============================================================================
 #  BASE BACKEND
 # ==============================================================================
 
+
 class ThreatIntelBackend:
-    name    = "base"
+    name = "base"
     enabled = True
 
-    def check_ip(self, ip: str)         -> list[dict]: return []
-    def check_domain(self, domain: str) -> list[dict]: return []
-    def check_url(self, url: str)       -> list[dict]: return []
+    def check_ip(self, ip: str) -> list[dict]:
+        return []
+
+    def check_domain(self, domain: str) -> list[dict]:
+        return []
+
+    def check_url(self, url: str) -> list[dict]:
+        return []
+
 
 # ==============================================================================
 #  LOCAL FEED COLLECTORS  (IntelMQ pipeline emulation)
@@ -367,24 +413,32 @@ class ThreatIntelBackend:
 #    check_*()    ->  lookup interface        (Expert / Output bots)
 # ==============================================================================
 
+
 class FeedCollector(ThreatIntelBackend):
     """Abstract base for all local feed collectors."""
 
-    feed_id      : str  = "base_feed"
-    feed_url     : str  = ""
-    ttl          : int  = 3600
-    http_headers : dict = {}
+    feed_id: str = "base_feed"
+    feed_url: str = ""
+    ttl: int = 3600
+    http_headers: dict = {}
 
     # Default IntelMQ classification values (overridden per subclass)
-    _ip_type   = "blacklist";  _ip_taxonomy   = "other"; _ip_confidence   = 0.85
-    _dom_type  = "blacklist";  _dom_taxonomy  = "other"; _dom_confidence  = 0.80
-    _url_type  = "blacklist";  _url_taxonomy  = "other"; _url_confidence  = 0.80
+    _ip_type = "blacklist"
+    _ip_taxonomy = "other"
+    _ip_confidence = 0.85
+    _dom_type = "blacklist"
+    _dom_taxonomy = "other"
+    _dom_confidence = 0.80
+    _url_type = "blacklist"
+    _url_taxonomy = "other"
+    _url_confidence = 0.80
 
-    def __init__(self, cache: FeedCache, force_refresh: bool = False,
-                 verbose: bool = False):
-        self.cache         = cache
+    def __init__(
+        self, cache: FeedCache, force_refresh: bool = False, verbose: bool = False
+    ):
+        self.cache = cache
         self.force_refresh = force_refresh
-        self.verbose       = verbose
+        self.verbose = verbose
         self._data: dict | None = None
 
     # -- Subclasses implement -------------------------------------------------
@@ -421,8 +475,7 @@ class FeedCollector(ThreatIntelBackend):
             if self.verbose:
                 print(f"  [warn]  {self.name} download failed, trying stale cache")
             self._data = (
-                self.cache.get(self.feed_id, ttl_seconds=99_999_999)
-                or self._empty()
+                self.cache.get(self.feed_id, ttl_seconds=99_999_999) or self._empty()
             )
             return self._data
 
@@ -445,18 +498,21 @@ class FeedCollector(ThreatIntelBackend):
 
     # -- Lookup helpers -------------------------------------------------------
     def _hit(self, ctype: str, ctaxo: str, conf: float, **extra) -> list[dict]:
-        return [{
-            "source": self.name,
-            "classification_type": ctype,
-            "classification_taxonomy": ctaxo,
-            "confidence": conf,
-            "details": extra,
-        }]
+        return [
+            {
+                "source": self.name,
+                "classification_type": ctype,
+                "classification_taxonomy": ctaxo,
+                "confidence": conf,
+                "details": extra,
+            }
+        ]
 
     def check_ip(self, ip: str) -> list[dict]:
         if ip in self.load().get("ips", []):
-            return self._hit(self._ip_type, self._ip_taxonomy,
-                             self._ip_confidence, feed=self.name)
+            return self._hit(
+                self._ip_type, self._ip_taxonomy, self._ip_confidence, feed=self.name
+            )
         return []
 
     def check_domain(self, domain: str) -> list[dict]:
@@ -464,21 +520,30 @@ class FeedCollector(ThreatIntelBackend):
         for i in range(len(parts) - 1):
             candidate = ".".join(parts[i:])
             if candidate in self.load().get("domains", []):
-                return self._hit(self._dom_type, self._dom_taxonomy,
-                                 self._dom_confidence,
-                                 feed=self.name, matched=candidate)
+                return self._hit(
+                    self._dom_type,
+                    self._dom_taxonomy,
+                    self._dom_confidence,
+                    feed=self.name,
+                    matched=candidate,
+                )
         return []
 
     def check_url(self, url: str) -> list[dict]:
         for feed_url in self.load().get("urls", []):
             if url == feed_url or url.startswith(feed_url):
-                return self._hit(self._url_type, self._url_taxonomy,
-                                 self._url_confidence,
-                                 feed=self.name, matched=feed_url)
+                return self._hit(
+                    self._url_type,
+                    self._url_taxonomy,
+                    self._url_confidence,
+                    feed=self.name,
+                    matched=feed_url,
+                )
         return []
 
 
 # -- A. URLhaus (Abuse.ch) -----------------------------------------------------
+
 
 class URLhausCollector(FeedCollector):
     """
@@ -486,12 +551,13 @@ class URLhausCollector(FeedCollector):
     Feed : https://urlhaus.abuse.ch/downloads/csv/
     TTL  : 60 min
     """
-    name     = "URLhaus"
-    feed_id  = "urlhaus"
-    feed_url = "https://urlhaus.abuse.ch/downloads/csv/"
-    ttl      = 3600
 
-    _ip_type   = _dom_type  = _url_type   = "malware-distribution"
+    name = "URLhaus"
+    feed_id = "urlhaus"
+    feed_url = "https://urlhaus.abuse.ch/downloads/csv/"
+    ttl = 3600
+
+    _ip_type = _dom_type = _url_type = "malware-distribution"
     _ip_taxonomy = _dom_taxonomy = _url_taxonomy = "malicious-code"
     _ip_confidence = _dom_confidence = _url_confidence = 0.90
 
@@ -524,6 +590,7 @@ class URLhausCollector(FeedCollector):
 
 # -- B. Feodo Tracker — botnet C2 IPs (Abuse.ch) ------------------------------
 
+
 class FeodoTrackerCollector(FeedCollector):
     """
     IntelMQ pipeline: HTTP Collector -> Feodo Tracker Parser
@@ -531,13 +598,14 @@ class FeodoTrackerCollector(FeedCollector):
     TTL  : 60 min
     Detects active botnet C2 servers (Emotet, TrickBot, QakBot, etc.)
     """
-    name     = "FeodoTracker"
-    feed_id  = "feodo_tracker"
-    feed_url = "https://feodotracker.abuse.ch/downloads/ipblocklist.csv"
-    ttl      = 3600
 
-    _ip_type      = "c2-server"
-    _ip_taxonomy  = "malicious-code"
+    name = "FeodoTracker"
+    feed_id = "feodo_tracker"
+    feed_url = "https://feodotracker.abuse.ch/downloads/ipblocklist.csv"
+    ttl = 3600
+
+    _ip_type = "c2-server"
+    _ip_taxonomy = "malicious-code"
     _ip_confidence = 0.95
 
     def _parse(self, raw: str) -> dict:
@@ -562,6 +630,7 @@ class FeodoTrackerCollector(FeedCollector):
 
 # -- C. PhishTank --------------------------------------------------------------
 
+
 class PhishTankCollector(FeedCollector):
     """
     IntelMQ pipeline: HTTP Collector -> PhishTank Parser
@@ -569,16 +638,22 @@ class PhishTankCollector(FeedCollector):
     TTL  : 60 min
     A free PhishTank account + API key increases the download rate limit.
     """
-    name    = "PhishTank"
-    feed_id = "phishtank"
-    ttl     = 3600
 
-    _url_type  = _dom_type  = "phishing"
+    name = "PhishTank"
+    feed_id = "phishtank"
+    ttl = 3600
+
+    _url_type = _dom_type = "phishing"
     _url_taxonomy = _dom_taxonomy = "fraud"
     _url_confidence = _dom_confidence = 0.92
 
-    def __init__(self, cache: FeedCache, api_key: str = "",
-                 force_refresh: bool = False, verbose: bool = False):
+    def __init__(
+        self,
+        cache: FeedCache,
+        api_key: str = "",
+        force_refresh: bool = False,
+        verbose: bool = False,
+    ):
         super().__init__(cache, force_refresh, verbose)
         if api_key:
             self.feed_url = (
@@ -607,6 +682,7 @@ class PhishTankCollector(FeedCollector):
 
 # -- D. Bambenek C2 / DGA master list -----------------------------------------
 
+
 class BambenekCollector(FeedCollector):
     """
     IntelMQ pipeline: HTTP Collector -> Bambenek Parser
@@ -614,15 +690,14 @@ class BambenekCollector(FeedCollector):
     TTL  : 60 min
     Detects C2 domains and domains generated by DGA malware families.
     """
-    name     = "Bambenek"
-    feed_id  = "bambenek_c2"
-    feed_url = (
-        "https://osint.bambenekconsulting.com/feeds/c2-dommasterlist-high.txt"
-    )
+
+    name = "Bambenek"
+    feed_id = "bambenek_c2"
+    feed_url = "https://osint.bambenekconsulting.com/feeds/c2-dommasterlist-high.txt"
     ttl = 3600
 
-    _dom_type      = "c2-server"
-    _dom_taxonomy  = "malicious-code"
+    _dom_type = "c2-server"
+    _dom_taxonomy = "malicious-code"
     _dom_confidence = 0.88
 
     def _parse(self, raw: str) -> dict:
@@ -640,6 +715,7 @@ class BambenekCollector(FeedCollector):
 
 # -- E. Blocklist.de -----------------------------------------------------------
 
+
 class BlocklistDeCollector(FeedCollector):
     """
     IntelMQ pipeline: HTTP Collector -> Blocklist.de Parser
@@ -647,13 +723,14 @@ class BlocklistDeCollector(FeedCollector):
     TTL  : 12 h  (large file — respect the volunteer service)
     IPs reported for SSH, FTP, SMTP brute-force or vulnerability scanning.
     """
-    name     = "Blocklist.de"
-    feed_id  = "blocklist_de"
-    feed_url = "https://lists.blocklist.de/lists/all.txt"
-    ttl      = 43200
 
-    _ip_type      = "brute-force"
-    _ip_taxonomy  = "intrusion-attempts"
+    name = "Blocklist.de"
+    feed_id = "blocklist_de"
+    feed_url = "https://lists.blocklist.de/lists/all.txt"
+    ttl = 43200
+
+    _ip_type = "brute-force"
+    _ip_taxonomy = "intrusion-attempts"
     _ip_confidence = 0.80
 
     def _parse(self, raw: str) -> dict:
@@ -673,6 +750,7 @@ class BlocklistDeCollector(FeedCollector):
 
 # -- F. Emerging Threats (Proofpoint open rules) -------------------------------
 
+
 class EmergingThreatsCollector(FeedCollector):
     """
     IntelMQ pipeline: HTTP Collector -> Emerging Threats Parser
@@ -681,15 +759,14 @@ class EmergingThreatsCollector(FeedCollector):
     Consolidated list of IPs hosting botnets and severe threats.
     Supports both individual IPs and CIDR blocks (/24 and narrower).
     """
-    name     = "EmergingThreats"
-    feed_id  = "emerging_threats"
-    feed_url = (
-        "https://rules.emergingthreats.net/fwrules/emerging-Block-IPs.txt"
-    )
+
+    name = "EmergingThreats"
+    feed_id = "emerging_threats"
+    feed_url = "https://rules.emergingthreats.net/fwrules/emerging-Block-IPs.txt"
     ttl = 86400
 
-    _ip_type      = "infected-system"
-    _ip_taxonomy  = "malicious-code"
+    _ip_type = "infected-system"
+    _ip_taxonomy = "malicious-code"
     _ip_confidence = 0.82
 
     def _parse(self, raw: str) -> dict:
@@ -714,8 +791,9 @@ class EmergingThreatsCollector(FeedCollector):
     def check_ip(self, ip: str) -> list[dict]:
         feed_ips = self.load().get("ips", [])
         if ip in feed_ips:
-            return self._hit(self._ip_type, self._ip_taxonomy,
-                             self._ip_confidence, feed=self.name)
+            return self._hit(
+                self._ip_type, self._ip_taxonomy, self._ip_confidence, feed=self.name
+            )
         try:
             addr = ipaddress.ip_address(ip)
             for entry in feed_ips:
@@ -723,9 +801,11 @@ class EmergingThreatsCollector(FeedCollector):
                     try:
                         if addr in ipaddress.ip_network(entry, strict=False):
                             return self._hit(
-                                self._ip_type, self._ip_taxonomy,
+                                self._ip_type,
+                                self._ip_taxonomy,
                                 self._ip_confidence,
-                                feed=self.name, matched_cidr=entry,
+                                feed=self.name,
+                                matched_cidr=entry,
                             )
                     except ValueError:
                         pass
@@ -736,6 +816,7 @@ class EmergingThreatsCollector(FeedCollector):
 
 # -- G. AlienVault OTX ---------------------------------------------------------
 
+
 class OTXCollector(FeedCollector):
     """
     IntelMQ pipeline: OTX Collector -> OTX Parser
@@ -744,12 +825,18 @@ class OTXCollector(FeedCollector):
     Requires a free OTX account API key (env: OTX_KEY or --otx-key).
     Covers IPs, domains, and URLs from community threat pulses.
     """
-    name    = "AlienVault-OTX"
-    feed_id = "otx"
-    ttl     = 1800
 
-    def __init__(self, cache: FeedCache, api_key: str,
-                 force_refresh: bool = False, verbose: bool = False):
+    name = "AlienVault-OTX"
+    feed_id = "otx"
+    ttl = 1800
+
+    def __init__(
+        self,
+        cache: FeedCache,
+        api_key: str,
+        force_refresh: bool = False,
+        verbose: bool = False,
+    ):
         super().__init__(cache, force_refresh, verbose)
         self.api_key = api_key
 
@@ -763,11 +850,12 @@ class OTXCollector(FeedCollector):
             resp = _http_get(
                 "https://otx.alienvault.com/api/v1/pulses/subscribed"
                 f"?limit=50&page={page}",
-                headers=headers, timeout=30,
+                headers=headers,
+                timeout=30,
             )
             if resp is None:
                 break
-            data    = resp.json()
+            data = resp.json()
             results = data.get("results", [])
             if not results:
                 break
@@ -789,7 +877,7 @@ class OTXCollector(FeedCollector):
         except Exception:
             return {"ips": ips, "domains": domains, "urls": urls}
         for ind in indicators:
-            t     = ind.get("type", "")
+            t = ind.get("type", "")
             value = ind.get("indicator", "").strip()
             if not value:
                 continue
@@ -805,8 +893,7 @@ class OTXCollector(FeedCollector):
 
     def check_ip(self, ip: str) -> list[dict]:
         if ip in self.load().get("ips", []):
-            return self._hit("blacklist", "other", 0.75,
-                             feed=self.name)
+            return self._hit("blacklist", "other", 0.75, feed=self.name)
         return []
 
     def check_domain(self, domain: str) -> list[dict]:
@@ -814,27 +901,31 @@ class OTXCollector(FeedCollector):
         for i in range(len(parts) - 1):
             candidate = ".".join(parts[i:])
             if candidate in self.load().get("domains", []):
-                return self._hit("blacklist", "other", 0.72,
-                                 feed=self.name, matched=candidate)
+                return self._hit(
+                    "blacklist", "other", 0.72, feed=self.name, matched=candidate
+                )
         return []
 
     def check_url(self, url: str) -> list[dict]:
         for feed_url in self.load().get("urls", []):
             if url == feed_url or url.startswith(feed_url):
-                return self._hit("blacklist", "other", 0.72,
-                                 feed=self.name, matched=feed_url)
+                return self._hit(
+                    "blacklist", "other", 0.72, feed=self.name, matched=feed_url
+                )
         return []
+
 
 # ==============================================================================
 #  REMOTE API BACKENDS
 # ==============================================================================
+
 
 class AbuseIPDBBackend(ThreatIntelBackend):
     name = "AbuseIPDB"
     BASE = "https://api.abuseipdb.com/api/v2"
 
     def __init__(self, api_key: str, min_score: int = 25):
-        self.api_key   = api_key
+        self.api_key = api_key
         self.min_score = min_score
         self._cache: dict[str, list] = {}
 
@@ -854,22 +945,24 @@ class AbuseIPDBBackend(ThreatIntelBackend):
             d = r.json().get("data", {})
         except Exception:
             return []
-        score   = d.get("abuseConfidenceScore", 0)
+        score = d.get("abuseConfidenceScore", 0)
         results = []
         if score >= self.min_score:
-            results.append({
-                "source": self.name,
-                "classification_type": "blacklist",
-                "classification_taxonomy": "other",
-                "confidence": score / 100,
-                "details": {
-                    "abuse_score":   score,
-                    "total_reports": d.get("totalReports", 0),
-                    "country":       d.get("countryCode", ""),
-                    "isp":           d.get("isp", ""),
-                    "last_reported": d.get("lastReportedAt", ""),
-                },
-            })
+            results.append(
+                {
+                    "source": self.name,
+                    "classification_type": "blacklist",
+                    "classification_taxonomy": "other",
+                    "confidence": score / 100,
+                    "details": {
+                        "abuse_score": score,
+                        "total_reports": d.get("totalReports", 0),
+                        "country": d.get("countryCode", ""),
+                        "isp": d.get("isp", ""),
+                        "last_reported": d.get("lastReportedAt", ""),
+                    },
+                }
+            )
         self._cache[ip] = results
         return results
 
@@ -879,7 +972,7 @@ class VirusTotalBackend(ThreatIntelBackend):
     BASE = "https://www.virustotal.com/api/v3"
 
     def __init__(self, api_key: str, min_detections: int = 2):
-        self.api_key        = api_key
+        self.api_key = api_key
         self.min_detections = min_detections
         self._cache: dict[str, list] = {}
 
@@ -889,7 +982,8 @@ class VirusTotalBackend(ThreatIntelBackend):
         try:
             r = requests.get(
                 f"{self.BASE}/{path}",
-                headers={"x-apikey": self.api_key}, timeout=15,
+                headers={"x-apikey": self.api_key},
+                timeout=15,
             )
             if r.status_code == 404:
                 return {}
@@ -902,25 +996,28 @@ class VirusTotalBackend(ThreatIntelBackend):
         try:
             attrs = data["data"]["attributes"]
             stats = attrs.get("last_analysis_stats", {})
-            mal   = stats.get("malicious", 0)
-            sus   = stats.get("suspicious", 0)
+            mal = stats.get("malicious", 0)
+            sus = stats.get("suspicious", 0)
             total = sum(stats.values()) or 1
-            hits  = mal + sus
+            hits = mal + sus
             if hits < self.min_detections:
                 return []
-            return [{
-                "source": self.name,
-                "classification_type":
-                    "malware" if mal else "ids-alert",
-                "classification_taxonomy":
-                    "malicious-code" if mal else "intrusion-attempts",
-                "confidence": hits / total,
-                "details": {
-                    "malicious": mal, "suspicious": sus,
-                    "total_engines": total,
-                    "reputation": attrs.get("reputation", 0),
-                },
-            }]
+            return [
+                {
+                    "source": self.name,
+                    "classification_type": "malware" if mal else "ids-alert",
+                    "classification_taxonomy": "malicious-code"
+                    if mal
+                    else "intrusion-attempts",
+                    "confidence": hits / total,
+                    "details": {
+                        "malicious": mal,
+                        "suspicious": sus,
+                        "total_engines": total,
+                        "reputation": attrs.get("reputation", 0),
+                    },
+                }
+            ]
         except (KeyError, TypeError):
             return []
 
@@ -942,6 +1039,7 @@ class VirusTotalBackend(ThreatIntelBackend):
         if url in self._cache:
             return self._cache[url]
         import base64
+
         uid = base64.urlsafe_b64encode(url.encode()).decode().rstrip("=")
         res = self._parse(self._get(f"urls/{uid}"))
         self._cache[url] = res
@@ -953,8 +1051,14 @@ class ShodanBackend(ThreatIntelBackend):
     BASE = "https://api.shodan.io"
 
     DANGEROUS_TAGS = {
-        "malware", "c2", "scanner", "honeypot",
-        "compromised", "tor", "vpn", "proxy",
+        "malware",
+        "c2",
+        "scanner",
+        "honeypot",
+        "compromised",
+        "tor",
+        "vpn",
+        "proxy",
     }
 
     def __init__(self, api_key: str):
@@ -969,7 +1073,8 @@ class ShodanBackend(ThreatIntelBackend):
         try:
             r = requests.get(
                 f"{self.BASE}/shodan/host/{ip}",
-                params={"key": self.api_key}, timeout=15,
+                params={"key": self.api_key},
+                timeout=15,
             )
             if r.status_code == 404:
                 return []
@@ -977,31 +1082,34 @@ class ShodanBackend(ThreatIntelBackend):
             data = r.json()
         except Exception:
             return []
-        tags      = set(data.get("tags", []))
+        tags = set(data.get("tags", []))
         dangerous = tags & self.DANGEROUS_TAGS
-        ports     = data.get("ports", [])
+        ports = data.get("ports", [])
         sus_ports = [p for p in ports if p in SUSPICIOUS_PORTS]
-        results   = []
+        results = []
         if dangerous or sus_ports:
-            results.append({
-                "source": self.name,
-                "classification_type": "potentially-unwanted-accessible",
-                "classification_taxonomy": "vulnerable",
-                "confidence": 0.65,
-                "details": {
-                    "dangerous_tags":  list(dangerous),
-                    "open_ports":      ports,
-                    "suspicious_ports": sus_ports,
-                    "country":         data.get("country_name", ""),
-                    "org":             data.get("org", ""),
-                },
-            })
+            results.append(
+                {
+                    "source": self.name,
+                    "classification_type": "potentially-unwanted-accessible",
+                    "classification_taxonomy": "vulnerable",
+                    "confidence": 0.65,
+                    "details": {
+                        "dangerous_tags": list(dangerous),
+                        "open_ports": ports,
+                        "suspicious_ports": sus_ports,
+                        "country": data.get("country_name", ""),
+                        "org": data.get("org", ""),
+                    },
+                }
+            )
         self._cache[ip] = results
         return results
 
 
 class IntelMQApiBackend(ThreatIntelBackend):
     """Query a live IntelMQ REST API instance (event store lookup)."""
+
     name = "IntelMQ-API"
 
     def __init__(self, base_url: str, username: str, password: str):
@@ -1036,7 +1144,8 @@ class IntelMQApiBackend(ThreatIntelBackend):
             r = requests.get(
                 f"{self.base_url}/v1/api/{path}",
                 headers={"Authorization": self._token},
-                params=params, timeout=15,
+                params=params,
+                timeout=15,
             )
             r.raise_for_status()
             return r.json()
@@ -1047,88 +1156,117 @@ class IntelMQApiBackend(ThreatIntelBackend):
         key = f"{field}:{value}"
         if key in self._cache:
             return self._cache[key]
-        data    = self._get("events", {field: value})
+        data = self._get("events", {field: value})
         results = []
         if isinstance(data, list):
             for event in data:
-                results.append({
-                    "source": self.name,
-                    "classification_type":
-                        event.get("classification.type", "undetermined"),
-                    "classification_taxonomy":
-                        event.get("classification.taxonomy", "other"),
-                    "confidence": 0.75,
-                    "details": {
-                        k: v for k, v in event.items()
-                        if k.startswith(("source.", "feed."))
-                    },
-                })
+                results.append(
+                    {
+                        "source": self.name,
+                        "classification_type": event.get(
+                            "classification.type", "undetermined"
+                        ),
+                        "classification_taxonomy": event.get(
+                            "classification.taxonomy", "other"
+                        ),
+                        "confidence": 0.75,
+                        "details": {
+                            k: v
+                            for k, v in event.items()
+                            if k.startswith(("source.", "feed."))
+                        },
+                    }
+                )
         self._cache[key] = results
         return results
 
-    def check_ip(self, ip: str)         -> list[dict]:
-        return self._lookup("source.ip",   ip)
+    def check_ip(self, ip: str) -> list[dict]:
+        return self._lookup("source.ip", ip)
+
     def check_domain(self, domain: str) -> list[dict]:
         return self._lookup("source.fqdn", domain)
-    def check_url(self, url: str)       -> list[dict]:
-        return self._lookup("source.url",  url)
+
+    def check_url(self, url: str) -> list[dict]:
+        return self._lookup("source.url", url)
 
 
 # -- Local heuristics ----------------------------------------------------------
 
+
 class LocalHeuristicBackend(ThreatIntelBackend):
     """DGA domain detection and suspicious-port flagging. No network needed."""
+
     name = "LocalHeuristic"
 
     _DGA = [
-        (re.compile(r"^[a-z0-9]{16,}\.[a-z]{2,4}$", re.I),
-         "Long random label — possible DGA", 0.55),
-        (re.compile(r"^[a-z0-9]{8,}\.(xyz|top|tk|ml|ga|cf|gq|pw)$", re.I),
-         "DGA-like + cheap TLD", 0.65),
-        (re.compile(r"^[a-z]{3,6}[0-9]{4,}\.[a-z]{2,4}$", re.I),
-         "Alphanumeric mix — possible DGA", 0.50),
+        (
+            re.compile(r"^[a-z0-9]{16,}\.[a-z]{2,4}$", re.I),
+            "Long random label — possible DGA",
+            0.55,
+        ),
+        (
+            re.compile(r"^[a-z0-9]{8,}\.(xyz|top|tk|ml|ga|cf|gq|pw)$", re.I),
+            "DGA-like + cheap TLD",
+            0.65,
+        ),
+        (
+            re.compile(r"^[a-z]{3,6}[0-9]{4,}\.[a-z]{2,4}$", re.I),
+            "Alphanumeric mix — possible DGA",
+            0.50,
+        ),
     ]
 
     def check_domain(self, domain: str) -> list[dict]:
         for pattern, reason, conf in self._DGA:
             if pattern.match(domain):
-                return [{
-                    "source": self.name,
-                    "classification_type": "dga-domain",
-                    "classification_taxonomy": "malicious-code",
-                    "confidence": conf,
-                    "details": {"reason": reason},
-                }]
+                return [
+                    {
+                        "source": self.name,
+                        "classification_type": "dga-domain",
+                        "classification_taxonomy": "malicious-code",
+                        "confidence": conf,
+                        "details": {"reason": reason},
+                    }
+                ]
         return []
+
 
 # ==============================================================================
 #  ANALYSER ENGINE
 # ==============================================================================
 
 _REMOTE_BACKENDS = (
-    AbuseIPDBBackend, VirusTotalBackend, ShodanBackend, IntelMQApiBackend,
+    AbuseIPDBBackend,
+    VirusTotalBackend,
+    ShodanBackend,
+    IntelMQApiBackend,
 )
 
 
 class Analyser:
-    def __init__(self, backends: list[ThreatIntelBackend],
-                 rate_limit: float = 0.2, verbose: bool = False):
-        self.backends   = backends
+    def __init__(
+        self,
+        backends: list[ThreatIntelBackend],
+        rate_limit: float = 0.2,
+        verbose: bool = False,
+    ):
+        self.backends = backends
         self.rate_limit = rate_limit
-        self.verbose    = verbose
+        self.verbose = verbose
 
-    def analyse(self, observables: list[Observable],
-                console: Any = None) -> list[ThreatMatch]:
+    def analyse(
+        self, observables: list[Observable], console: Any = None
+    ) -> list[ThreatMatch]:
         matches: list[ThreatMatch] = []
 
-        ips     = [o for o in observables if o.kind == "ip"]
+        ips = [o for o in observables if o.kind == "ip"]
         domains = [o for o in observables if o.kind == "domain"]
-        urls    = [o for o in observables if o.kind == "url"]
+        urls = [o for o in observables if o.kind == "url"]
 
         groups = [
-            (ips,     "check_ip"),
+            (ips, "check_ip"),
             (domains, "check_domain"),
-            (urls,    "check_url"),
+            (urls, "check_url"),
         ]
         total = sum(len(g) for g, _ in groups)
 
@@ -1173,6 +1311,7 @@ class Analyser:
 
         return matches
 
+
 # ==============================================================================
 #  REPORTING
 # ==============================================================================
@@ -1181,8 +1320,10 @@ _SEV_COLOR = {"high": "bold red", "medium": "yellow", "low": "cyan"}
 
 
 def _severity(conf: float) -> str:
-    if conf >= 0.75: return "high"
-    if conf >= 0.45: return "medium"
+    if conf >= 0.75:
+        return "high"
+    if conf >= 0.45:
+        return "medium"
     return "low"
 
 
@@ -1196,23 +1337,23 @@ def print_report(
         _plain_report(matches, observables)
         return
 
-    hit_values  = {m.observable.value for m in matches}
+    hit_values = {m.observable.value for m in matches}
     by_kind: dict[str, int] = defaultdict(int)
     for o in observables:
         by_kind[o.kind] += 1
 
     be_names = "  ".join(f"[cyan]{b.name}[/cyan]" for b in backends)
-    console.print(Panel(
-        f"[bold]Observables:[/bold]  "
-        + "  ".join(
-            f"[cyan]{k}[/cyan]:{v}" for k, v in sorted(by_kind.items())
+    console.print(
+        Panel(
+            f"[bold]Observables:[/bold]  "
+            + "  ".join(f"[cyan]{k}[/cyan]:{v}" for k, v in sorted(by_kind.items()))
+            + f"\n[bold]Backends:[/bold]    {be_names}"
+            + f"\n[bold red]Threats:[/bold red]       "
+            f"{len(hit_values)} observables matched  /  {len(matches)} total hits",
+            title=f"[bold blue]{TOOL_NAME}  v{VERSION}[/bold blue]",
+            border_style="blue",
         )
-        + f"\n[bold]Backends:[/bold]    {be_names}"
-        + f"\n[bold red]Threats:[/bold red]       "
-          f"{len(hit_values)} observables matched  /  {len(matches)} total hits",
-        title=f"[bold blue]{TOOL_NAME}  v{VERSION}[/bold blue]",
-        border_style="blue",
-    ))
+    )
 
     if not matches:
         console.print("\n[bold green]  No threats detected.[/bold green]\n")
@@ -1221,19 +1362,21 @@ def print_report(
     # Threat matches table
     t = Table(
         title="Threat Intelligence Matches",
-        box=box.ROUNDED, show_lines=True, highlight=True,
+        box=box.ROUNDED,
+        show_lines=True,
+        highlight=True,
     )
-    t.add_column("Observable",  style="bold", no_wrap=True)
-    t.add_column("Kind",        style="dim",  width=7)
-    t.add_column("File",        style="dim",  width=16)
-    t.add_column("TI Source",   style="cyan", width=18)
+    t.add_column("Observable", style="bold", no_wrap=True)
+    t.add_column("Kind", style="dim", width=7)
+    t.add_column("File", style="dim", width=16)
+    t.add_column("TI Source", style="cyan", width=18)
     t.add_column("Class. Type", style="magenta")
-    t.add_column("Taxonomy",    style="magenta")
-    t.add_column("Conf.",       justify="right", width=6)
+    t.add_column("Taxonomy", style="magenta")
+    t.add_column("Conf.", justify="right", width=6)
     t.add_column("Details")
 
     for m in sorted(matches, key=lambda x: (-x.confidence, x.observable.kind)):
-        col  = _SEV_COLOR[_severity(m.confidence)]
+        col = _SEV_COLOR[_severity(m.confidence)]
         dets = "; ".join(f"{k}={v}" for k, v in list(m.details.items())[:3])
         t.add_row(
             f"[{col}]{m.observable.value}[/{col}]",
@@ -1252,11 +1395,11 @@ def print_report(
         title="Extracted Observables (top 40, red dot = threat hit)",
         box=box.SIMPLE_HEAD,
     )
-    ot.add_column("Kind",  width=7)
+    ot.add_column("Kind", width=7)
     ot.add_column("Value", no_wrap=True)
-    ot.add_column("Cnt",   justify="right", width=5)
+    ot.add_column("Cnt", justify="right", width=5)
     ot.add_column("Context")
-    ot.add_column("File",  style="dim")
+    ot.add_column("File", style="dim")
 
     for obs in sorted(observables, key=lambda o: -o.count)[:40]:
         flag = "[red]●[/red] " if obs.value in hit_values else "  "
@@ -1276,39 +1419,37 @@ def print_report(
             title="Feed Collector Status",
             box=box.SIMPLE_HEAD,
         )
-        ft.add_column("Feed",    style="cyan")
-        ft.add_column("TTL",     justify="right", width=8)
-        ft.add_column("Cached",  width=12)
-        ft.add_column("IPs",     justify="right", width=8)
+        ft.add_column("Feed", style="cyan")
+        ft.add_column("TTL", justify="right", width=8)
+        ft.add_column("Cached", width=12)
+        ft.add_column("IPs", justify="right", width=8)
         ft.add_column("Domains", justify="right", width=8)
-        ft.add_column("URLs",    justify="right", width=8)
+        ft.add_column("URLs", justify="right", width=8)
 
         for b in feed_bes:
             d = b._data or {}
-            ttl_label = (
-                f"{b.ttl//60}m" if b.ttl < 86400 else f"{b.ttl//3600}h"
-            )
+            ttl_label = f"{b.ttl // 60}m" if b.ttl < 86400 else f"{b.ttl // 3600}h"
             ft.add_row(
                 b.name,
                 ttl_label,
                 b.cache.age_str(b.feed_id),
-                str(len(d.get("ips",     []))),
+                str(len(d.get("ips", []))),
                 str(len(d.get("domains", []))),
-                str(len(d.get("urls",    []))),
+                str(len(d.get("urls", []))),
             )
         console.print(ft)
 
 
-def _plain_report(
-    matches: list[ThreatMatch], observables: list[Observable]
-) -> None:
+def _plain_report(matches: list[ThreatMatch], observables: list[Observable]) -> None:
     W = 72
     print("\n" + "=" * W)
     print(f"  {TOOL_NAME}  v{VERSION}  —  Results")
     print("=" * W)
     print(f"  Observables extracted : {len(observables)}")
-    print(f"  Threat hits           : "
-          f"{len({m.observable.value for m in matches})} observables")
+    print(
+        f"  Threat hits           : "
+        f"{len({m.observable.value for m in matches})} observables"
+    )
     print(f"  Total matches         : {len(matches)}")
     print()
     if not matches:
@@ -1317,8 +1458,10 @@ def _plain_report(
     print(f"  {'OBSERVABLE':<38} {'TI SOURCE':<18} {'TYPE':<22} {'CONF':>5}")
     print("  " + "-" * (W - 2))
     for m in sorted(matches, key=lambda x: -x.confidence):
-        print(f"  {m.observable.value:<38} {m.source:<18} "
-              f"{m.classification_type:<22} {m.confidence:>4.0%}")
+        print(
+            f"  {m.observable.value:<38} {m.source:<18} "
+            f"{m.classification_type:<22} {m.confidence:>4.0%}"
+        )
     print()
 
 
@@ -1331,8 +1474,10 @@ def export_json(
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "observables": [
             {
-                "kind": o.kind, "value": o.value,
-                "context": o.context, "count": o.count,
+                "kind": o.kind,
+                "value": o.value,
+                "context": o.context,
+                "count": o.count,
                 "source_file": o.source_file,
             }
             for o in observables
@@ -1340,13 +1485,13 @@ def export_json(
         "threat_matches": [
             {
                 "observable": m.observable.value,
-                "kind":        m.observable.kind,
+                "kind": m.observable.kind,
                 "source_file": m.observable.source_file,
-                "ti_source":   m.source,
-                "classification_type":     m.classification_type,
+                "ti_source": m.source,
+                "classification_type": m.classification_type,
                 "classification_taxonomy": m.classification_taxonomy,
-                "confidence":  m.confidence,
-                "details":     m.details,
+                "confidence": m.confidence,
+                "details": m.details,
             }
             for m in matches
         ],
@@ -1358,22 +1503,37 @@ def export_json(
 def export_csv(matches: list[ThreatMatch], path: str) -> None:
     with open(path, "w", newline="", encoding="utf-8") as fh:
         w = csv.writer(fh)
-        w.writerow([
-            "observable", "kind", "source_file", "ti_source",
-            "classification_type", "classification_taxonomy",
-            "confidence", "details",
-        ])
+        w.writerow(
+            [
+                "observable",
+                "kind",
+                "source_file",
+                "ti_source",
+                "classification_type",
+                "classification_taxonomy",
+                "confidence",
+                "details",
+            ]
+        )
         for m in matches:
-            w.writerow([
-                m.observable.value, m.observable.kind,
-                m.observable.source_file, m.source,
-                m.classification_type, m.classification_taxonomy,
-                f"{m.confidence:.2f}", json.dumps(m.details),
-            ])
+            w.writerow(
+                [
+                    m.observable.value,
+                    m.observable.kind,
+                    m.observable.source_file,
+                    m.source,
+                    m.classification_type,
+                    m.classification_taxonomy,
+                    f"{m.confidence:.2f}",
+                    json.dumps(m.details),
+                ]
+            )
+
 
 # ==============================================================================
 #  CLI
 # ==============================================================================
+
 
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -1429,42 +1589,52 @@ ENVIRONMENT VARIABLES
     )
 
     p.add_argument(
-        "pcap_files", nargs="+", metavar="FILE.pcap",
+        "pcap_files",
+        nargs="+",
+        metavar="FILE.pcap",
         help="One or more PCAP/CAP capture files to analyse",
     )
     p.add_argument("--version", action="version", version=f"%(prog)s {VERSION}")
 
     # Feed collector flags
     fc = p.add_argument_group("feed collectors  (IntelMQ-style local pipeline)")
-    fc.add_argument("--no-urlhaus",          action="store_true",
-                    help="Disable URLhaus feed")
-    fc.add_argument("--no-feodo",            action="store_true",
-                    help="Disable Feodo Tracker feed")
-    fc.add_argument("--no-phishtank",        action="store_true",
-                    help="Disable PhishTank feed")
-    fc.add_argument("--no-bambenek",         action="store_true",
-                    help="Disable Bambenek feed")
-    fc.add_argument("--no-blocklist-de",     action="store_true",
-                    help="Disable Blocklist.de feed")
-    fc.add_argument("--no-emerging-threats", action="store_true",
-                    help="Disable Emerging Threats feed")
+    fc.add_argument("--no-urlhaus", action="store_true", help="Disable URLhaus feed")
+    fc.add_argument(
+        "--no-feodo", action="store_true", help="Disable Feodo Tracker feed"
+    )
+    fc.add_argument(
+        "--no-phishtank", action="store_true", help="Disable PhishTank feed"
+    )
+    fc.add_argument("--no-bambenek", action="store_true", help="Disable Bambenek feed")
+    fc.add_argument(
+        "--no-blocklist-de", action="store_true", help="Disable Blocklist.de feed"
+    )
+    fc.add_argument(
+        "--no-emerging-threats",
+        action="store_true",
+        help="Disable Emerging Threats feed",
+    )
     fc.add_argument(
         "--otx-key",
-        metavar="KEY", default=os.environ.get("OTX_KEY", ""),
+        metavar="KEY",
+        default=os.environ.get("OTX_KEY", ""),
         help="AlienVault OTX API key  (env: OTX_KEY)",
     )
     fc.add_argument(
         "--phishtank-key",
-        metavar="KEY", default=os.environ.get("PHISHTANK_KEY", ""),
+        metavar="KEY",
+        default=os.environ.get("PHISHTANK_KEY", ""),
         help="PhishTank API key for higher rate limits  (env: PHISHTANK_KEY)",
     )
     fc.add_argument(
-        "--refresh-feeds", action="store_true",
+        "--refresh-feeds",
+        action="store_true",
         help="Force re-download of all feeds (ignore cache TTLs)",
     )
     fc.add_argument(
         "--cache-dir",
-        metavar="DIR", default=str(DEFAULT_CACHE_DIR),
+        metavar="DIR",
+        default=str(DEFAULT_CACHE_DIR),
         help=f"Feed cache directory  (default: {DEFAULT_CACHE_DIR})",
     )
 
@@ -1472,42 +1642,56 @@ ENVIRONMENT VARIABLES
     ti = p.add_argument_group("remote API backends  (keys required)")
     ti.add_argument(
         "--abuseipdb-key",
-        metavar="KEY", default=os.environ.get("ABUSEIPDB_KEY", ""),
+        metavar="KEY",
+        default=os.environ.get("ABUSEIPDB_KEY", ""),
         help="AbuseIPDB v2 API key  (env: ABUSEIPDB_KEY)",
     )
     ti.add_argument(
         "--abuseipdb-min-score",
-        type=int, default=25, metavar="N",
+        type=int,
+        default=25,
+        metavar="N",
         help="Minimum AbuseIPDB confidence score to report  (default: 25)",
     )
     ti.add_argument(
         "--virustotal-key",
-        metavar="KEY", default=os.environ.get("VIRUSTOTAL_KEY", ""),
+        metavar="KEY",
+        default=os.environ.get("VIRUSTOTAL_KEY", ""),
         help="VirusTotal v3 API key  (env: VIRUSTOTAL_KEY)",
     )
     ti.add_argument(
         "--virustotal-min-detections",
-        type=int, default=2, metavar="N",
+        type=int,
+        default=2,
+        metavar="N",
         help="Minimum VirusTotal engine detections  (default: 2)",
     )
     ti.add_argument(
         "--shodan-key",
-        metavar="KEY", default=os.environ.get("SHODAN_KEY", ""),
+        metavar="KEY",
+        default=os.environ.get("SHODAN_KEY", ""),
         help="Shodan API key  (env: SHODAN_KEY)",
     )
-    ti.add_argument("--intelmq-url",  metavar="URL",  default="",
-                    help="IntelMQ REST API base URL")
-    ti.add_argument("--intelmq-user", metavar="USER", default="",
-                    help="IntelMQ REST API username")
-    ti.add_argument("--intelmq-pass", metavar="PASS", default="",
-                    help="IntelMQ REST API password")
-    ti.add_argument("--no-heuristics", action="store_true",
-                    help="Disable local DGA / suspicious-port heuristics")
+    ti.add_argument(
+        "--intelmq-url", metavar="URL", default="", help="IntelMQ REST API base URL"
+    )
+    ti.add_argument(
+        "--intelmq-user", metavar="USER", default="", help="IntelMQ REST API username"
+    )
+    ti.add_argument(
+        "--intelmq-pass", metavar="PASS", default="", help="IntelMQ REST API password"
+    )
+    ti.add_argument(
+        "--no-heuristics",
+        action="store_true",
+        help="Disable local DGA / suspicious-port heuristics",
+    )
 
     # Filtering
     fl = p.add_argument_group("filtering")
     fl.add_argument(
-        "--include-private", action="store_true",
+        "--include-private",
+        action="store_true",
         help="Include private/RFC1918 IPs in lookups  (default: skip them)",
     )
     fl.add_argument(
@@ -1521,18 +1705,37 @@ ENVIRONMENT VARIABLES
 
     # Output
     out = p.add_argument_group("output")
-    out.add_argument("--output-json", metavar="FILE", default="",
-                     help="Save full results to a JSON file")
-    out.add_argument("--output-csv",  metavar="FILE", default="",
-                     help="Save threat matches to a CSV file")
     out.add_argument(
-        "--rate-limit", type=float, default=0.2, metavar="SECS",
+        "--output-json",
+        metavar="FILE",
+        default="",
+        help="Save full results to a JSON file",
+    )
+    out.add_argument(
+        "--output-csv",
+        metavar="FILE",
+        default="",
+        help="Save threat matches to a CSV file",
+    )
+    out.add_argument(
+        "--rate-limit",
+        type=float,
+        default=0.2,
+        metavar="SECS",
         help="Pause between remote API calls in seconds  (default: 0.2)",
     )
-    out.add_argument("--verbose", "-v", action="store_true",
-                     help="Show feed download progress and debug info")
-    out.add_argument("--quiet",   "-q", action="store_true",
-                     help="Suppress all output except errors  (exit 1 = threats found)")
+    out.add_argument(
+        "--verbose",
+        "-v",
+        action="store_true",
+        help="Show feed download progress and debug info",
+    )
+    out.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        help="Suppress all output except errors  (exit 1 = threats found)",
+    )
 
     return p
 
@@ -1547,21 +1750,24 @@ def validate_args(args: argparse.Namespace) -> None:
             print(f"[ERROR] Not a regular file: {f}", file=sys.stderr)
             sys.exit(2)
         if fp.suffix.lower() not in (".pcap", ".cap", ".pcapng"):
-            print(f"[WARN]  Unexpected extension for {f}; proceeding anyway.",
-                  file=sys.stderr)
+            print(
+                f"[WARN]  Unexpected extension for {f}; proceeding anyway.",
+                file=sys.stderr,
+            )
     if not HAS_SCAPY:
-        print("[ERROR] scapy is required. Install: pip install scapy",
-              file=sys.stderr)
+        print("[ERROR] scapy is required. Install: pip install scapy", file=sys.stderr)
         sys.exit(1)
     if not HAS_REQUESTS:
-        print("[ERROR] requests is required. Install: pip install requests",
-              file=sys.stderr)
+        print(
+            "[ERROR] requests is required. Install: pip install requests",
+            file=sys.stderr,
+        )
         sys.exit(1)
 
 
 def main() -> int:
     parser = build_parser()
-    args   = parser.parse_args()
+    args = parser.parse_args()
     validate_args(args)
 
     console = Console() if HAS_RICH else None
@@ -1586,8 +1792,7 @@ def main() -> int:
     if not args.no_feodo:
         backends.append(_feed(FeodoTrackerCollector))
     if not args.no_phishtank:
-        backends.append(_feed(PhishTankCollector,
-                              api_key=args.phishtank_key))
+        backends.append(_feed(PhishTankCollector, api_key=args.phishtank_key))
     if not args.no_bambenek:
         backends.append(_feed(BambenekCollector))
     if not args.no_blocklist_de:
@@ -1599,19 +1804,29 @@ def main() -> int:
 
     # Remote API backends
     if args.abuseipdb_key:
-        backends.append(AbuseIPDBBackend(
-            args.abuseipdb_key, args.abuseipdb_min_score,
-        ))
+        backends.append(
+            AbuseIPDBBackend(
+                args.abuseipdb_key,
+                args.abuseipdb_min_score,
+            )
+        )
     if args.virustotal_key:
-        backends.append(VirusTotalBackend(
-            args.virustotal_key, args.virustotal_min_detections,
-        ))
+        backends.append(
+            VirusTotalBackend(
+                args.virustotal_key,
+                args.virustotal_min_detections,
+            )
+        )
     if args.shodan_key:
         backends.append(ShodanBackend(args.shodan_key))
     if args.intelmq_url and args.intelmq_user:
-        backends.append(IntelMQApiBackend(
-            args.intelmq_url, args.intelmq_user, args.intelmq_pass,
-        ))
+        backends.append(
+            IntelMQApiBackend(
+                args.intelmq_url,
+                args.intelmq_user,
+                args.intelmq_pass,
+            )
+        )
     if not args.no_heuristics:
         backends.append(LocalHeuristicBackend())
 
@@ -1637,8 +1852,7 @@ def main() -> int:
         obs = PcapExtractor(pcap, verbose=args.verbose).extract()
         obs = [o for o in obs if o.kind in args.kinds]
         if not args.include_private:
-            obs = [o for o in obs
-                   if o.kind != "ip" or not is_private_ip(o.value)]
+            obs = [o for o in obs if o.kind != "ip" or not is_private_ip(o.value)]
         all_obs.extend(obs)
         if not args.quiet:
             print(f"    {len(obs)} observables extracted")
@@ -1670,9 +1884,8 @@ def main() -> int:
         print(f"  Running lookups across {len(backends)} backend(s)…\n")
 
     # Analyse
-    analyser = Analyser(backends, rate_limit=args.rate_limit,
-                        verbose=args.verbose)
-    matches  = analyser.analyse(unique_obs, console=console)
+    analyser = Analyser(backends, rate_limit=args.rate_limit, verbose=args.verbose)
+    matches = analyser.analyse(unique_obs, console=console)
 
     # Report
     if not args.quiet:
